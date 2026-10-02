@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml pytest
+      - run: pytest tests/ -v
+
+  # 案件辞書や取引先名がリポジトリへ入り込んでいないことを機械的に確認する。
+  # このツール自体が fail-closed を謳っているので、リポジトリ側も同じ思想で守る。
+  no-client-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 案件辞書が追跡されていないこと
+        run: |
+          set -euo pipefail
+          # 追跡していいのは雛形と共通ルールだけ。
+          # 実案件の辞書が1件でも入っていたら、それは取引先名の対応表である。
+          EXTRA=$(git ls-files 'src/mask_before_llm/redaction/*.yaml' \
+            | grep -vxF -e src/mask_before_llm/redaction/_template.yaml \
+                        -e src/mask_before_llm/redaction/_common.yaml || true)
+          if [ -n "$EXTRA" ]; then
+            echo "案件辞書が追跡されています:"; echo "$EXTRA"; exit 1
+          fi
+      - name: 個人・環境固有の値が混ざっていないこと
+        run: |
+          set -euo pipefail
+          # 絶対パス・外部ボリューム名は環境固有なので、どのファイルにもあってはならない。
+          # この CI 定義自身は検査パターンを文字列として含むため除く。
+          ABS=$(grep -rIl -E '/Users/|/Volumes/' \
+            --exclude-dir=.git --exclude=ci.yml . || true)
+          if [ -n "$ABS" ]; then
+            echo "絶対パスが含まれています:"; echo "$ABS"; exit 1
+          fi
+          # メールアドレスは example.com / example.org 以外を許さない。
+          # README と この CI 定義自身は検査パターンを文章として含むため除く。
+          # db.local のような架空ホストはテストデータなので許可する。
+          MAIL=$(grep -rIo -E '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}' \
+            --exclude-dir=.git --exclude=README.md --exclude=ci.yml . \
+            | grep -v -E '@(example\.(com|org)|db\.local)$' || true)
+          if [ -n "$MAIL" ]; then
+            echo "実メールアドレスの可能性:"; echo "$MAIL"; exit 1
+          fi
+          echo "OK"

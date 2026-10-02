@@ -1,0 +1,31 @@
+# ★最重要: 案件別の匿名化辞書には「隠すべき生の値」が入る。
+# 追跡していいのは雛形(_template.yaml)と共通ルール(_common.yaml)だけ。
+# ここを緩めると、取引先名の対応表をそのまま公開することになる。
+src/mask_before_llm/redaction/*.yaml
+!src/mask_before_llm/redaction/_template.yaml
+!src/mask_before_llm/redaction/_common.yaml
+
+# 入力・出力（他社由来のテキストが入る）
+input/
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# 環境・秘密
+.env
+.env.*
+!.env.example
+.envrc
+
+# エディタ・AI アシスタントのローカル設定
+.claude/
+.cursor/
+.DS_Store

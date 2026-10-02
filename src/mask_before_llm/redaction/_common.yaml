@@ -1,0 +1,43 @@
+# 全案件共通の匿名化ルール（案件別辞書とマージして使う）
+#
+# 由来: 秘匿値の grep 検知を「検知のみ」から「マスク置換 + 検証ゲート」へ
+#       発展させたもの。検知して止めるだけでなく、置換してから残存を確認する。
+# この _common.yaml は隠すべき生の値を含まないため git 追跡してよい。
+
+# ①マスク: LLM へ渡すテキストから機械的にダミー化する秘匿パターン（正規表現）。
+#   name=識別用ラベル / pattern=検出正規表現 / replacement=置換後のダミー文字列
+mask_regex:
+  - name: api_key_assignment
+    pattern: '(?i)(api[_-]?key|secret|password|passwd|access[_-]?token|token)\s*[:=]\s*["'']?[A-Za-z0-9_\-\.]{8,}["'']?'
+    replacement: '\1=***REDACTED***'
+  - name: aws_access_key_id
+    pattern: 'AKIA[0-9A-Z]{16}'
+    replacement: 'AKIA***REDACTED***'
+  - name: private_key_block
+    pattern: '-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----'
+    replacement: '[REDACTED PRIVATE KEY BLOCK]'
+  - name: db_connection_uri
+    pattern: '(?i)(postgres|postgresql|mysql|mongodb(\+srv)?|redis|amqp)://[^\s"''`]+'
+    replacement: '\1://***REDACTED***'
+  - name: bearer_token
+    pattern: '(?i)bearer\s+[A-Za-z0-9_\-\.=]{16,}'
+    replacement: 'Bearer ***REDACTED***'
+  - name: email_address
+    pattern: '[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'
+    replacement: '***@example.com'
+  - name: ipv4_address
+    pattern: '\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b'
+    replacement: '***.***.***.***'
+
+# ②検証ゲート: マスキング完了後にこのパターンが1件でも残っていたら「匿名化失敗」として
+#   処理を中断し、LLM には絶対に渡さない。人間が辞書を直すまで通さない。
+#   （mask_regex で消しきれなかった生シークレットの取りこぼしを止める最終防波堤）
+verify_deny:
+  - name: leftover_secret_keyword
+    pattern: '(?i)\b(api[_-]?key|secret|passwd|password|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*["'']?[A-Za-z0-9_\-\.]{8,}'
+  - name: leftover_aws_key
+    pattern: 'AKIA[0-9A-Z]{16}'
+  - name: leftover_private_key
+    pattern: '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  - name: leftover_db_uri
+    pattern: '(?i)(postgres|postgresql|mysql|mongodb(\+srv)?)://[^\s"''`]*:[^\s"''`]*@'

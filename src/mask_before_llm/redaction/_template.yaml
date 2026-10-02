@@ -1,0 +1,31 @@
+# 案件別 匿名化辞書（ローカルマスキングの入力）
+#
+# 使い方: この雛形を redaction/<案件key>.yaml にコピーして埋める。
+#   <案件key> は mask_text(raw, project_key=...) に渡す値と揃える。
+# 大原則:
+#   - この辞書ファイル自体に「隠すべき生の値」が入る → redaction/*.yaml は .gitignore 必須（_template と _common を除く）
+#   - decision が anonymize / as_is の案件だけ LLM へ渡してよい（metadata_only / pending は渡さない）
+#   - LLM に渡す前に、この辞書で必ず置換する。置換後に検証ゲート(secret検知)を通す。
+
+key: example-project          # mask_text の project_key と一致させる
+decision: anonymize           # anonymize | as_is | metadata_only | pending（後2つは利用不可）
+
+# 固有名の置換マップ（正規表現ではなく単純文字列。長い順に適用される）
+# 左（隠すべき生の値）→ 右（記事に出してよい汎用名）
+replace:
+  # 社名・プロダクト名
+  "（実社名をここに）": "某社"
+  "（実プロダクト名）": "ある勤怠管理SaaS"
+  # リポジトリ名・内部プロジェクト名
+  "（内部リポ名）": "project-a"
+  # 特徴的な内部用語・独自ドメイン語
+  "（独自業務用語）": "（一般化した表現）"
+
+# パス断片の置換（ディレクトリパスに含まれる実案件名など）
+# 記事にコード例やパスを載せるとき、案件名が漏れないように
+replace_paths:
+  "（実案件ディレクトリ名）/": "project-a/"
+
+# 完全にマスク（ダミー化）すべきパターン（正規表現）。置換後も検証ゲートで再チェックされる。
+# ここに列挙しなくても、_common.yaml の共通シークレット検知は必ず走る。
+mask_regex: []
