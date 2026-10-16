@@ -20,6 +20,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -31,8 +32,12 @@ try:
 except ImportError as e:  # pragma: no cover
     raise SystemExit("PyYAML が必要です: pip install pyyaml") from e
 
-REDACTION_DIR = Path(__file__).parent / "redaction"
-COMMON_FILE = REDACTION_DIR / "_common.yaml"
+_PACKAGE_RULES = Path(__file__).parent / "redaction"
+# 案件辞書の置き場所。pip でインストールした場合はパッケージの中に置けないので、
+# MASK_BEFORE_LLM_REDACTION_DIR で指定する（未指定ならパッケージ内の redaction/）。
+REDACTION_DIR = Path(os.environ.get("MASK_BEFORE_LLM_REDACTION_DIR") or _PACKAGE_RULES)
+# 共通ルールは常にパッケージ同梱のものを使う（案件辞書の置き場所とは独立）。
+COMMON_FILE = _PACKAGE_RULES / "_common.yaml"
 
 # テキストを LLM へ渡してよい decision
 PUBLISHABLE_DECISIONS = {"anonymize", "as_is"}

@@ -83,3 +83,29 @@ def test_replacement_text_is_literal(redaction_dir: Path) -> None:
     )
     masked, _ = mask_text("AcmeCorp", project_key="acme")
     assert masked == "\\1社"
+
+
+
+def test_redaction_dir_can_be_set_by_env(tmp_path: Path) -> None:
+    """pip でインストールした場合、案件辞書はパッケージの外に置く。共通ルールは同梱のまま。
+
+    設定は import 時に読むので、別プロセスで確かめる（reload すると例外クラスが
+    作り直され、他のテストの pytest.raises が効かなくなるため）。
+    """
+    import os
+    import subprocess
+
+    (tmp_path / "acme.yaml").write_text('decision: anonymize\nreplace:\n  "AcmeCorp": "某社"\n', encoding="utf-8")
+    code = (
+        "from mask_before_llm import masking as m\n"
+        "print(m.REDACTION_DIR)\n"
+        "print(m.COMMON_FILE.parent.name)\n"
+        "print(m.mask_text('AcmeCorp の password=hunter2hunter2', project_key='acme')[0])\n"
+    )
+    env = {**os.environ, "MASK_BEFORE_LLM_REDACTION_DIR": str(tmp_path),
+           "PYTHONPATH": str(Path(__file__).parent.parent / "src")}
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+    lines = out.stdout.splitlines()
+    assert lines[0] == str(tmp_path)
+    assert lines[1] == "redaction"  # 共通ルールはパッケージ同梱
+    assert lines[2] == "某社 の password=***REDACTED***"
