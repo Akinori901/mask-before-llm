@@ -61,3 +61,25 @@ def test_valid_key_still_works(redaction_dir: Path) -> None:
     masked, report = mask_text("AcmeCorp の話", project_key="acme-2")
     assert masked == "某社 の話"
     assert report.verify_passed
+
+
+@pytest.mark.parametrize(
+    "variant", ["AcmeCorp", "ACMECORP", "acmecorp", "ＡｃｍｅＣｏｒｐ", "ＡＣＭＥＣＯＲＰ"]
+)
+def test_proper_noun_variants_are_replaced(redaction_dir: Path, variant: str) -> None:
+    """辞書の表記と大文字小文字・全角半角が違うだけで素通りしていた。"""
+    (redaction_dir / "acme.yaml").write_text(
+        'decision: anonymize\nreplace:\n  "AcmeCorp": "某社"\n', encoding="utf-8"
+    )
+    masked, report = mask_text(f"{variant} の案件", project_key="acme")
+    assert masked == "某社 の案件"
+    assert report.replacements_applied == 1
+
+
+def test_replacement_text_is_literal(redaction_dir: Path) -> None:
+    r"""置換後の文字列に \1 や \g<0> があっても、正規表現の参照として解釈しない。"""
+    (redaction_dir / "acme.yaml").write_text(
+        'decision: anonymize\nreplace:\n  "AcmeCorp": "\\\\1社"\n', encoding="utf-8"
+    )
+    masked, _ = mask_text("AcmeCorp", project_key="acme")
+    assert masked == "\\1社"

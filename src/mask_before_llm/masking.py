@@ -8,6 +8,7 @@
 
 処理順:
   1. 案件別辞書 (redaction/<key>.yaml) の replace / replace_paths で固有名を汎用名へ
+     （英数字の大文字小文字・全角半角の表記ゆれも拾う）
   2. 共通 (_common.yaml) + 案件別の mask_regex で秘匿値をダミー化
   3. 検証ゲート (verify_deny): 消しきれない秘匿値が残っていたら MaskingError を送出
      → 呼び出し側は処理を中断し、絶対に LLM へ渡さない
@@ -20,6 +21,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -70,14 +72,33 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+def _variant_pattern(src: str) -> re.Pattern[str]:
+    """表記ゆれ（英数字の大文字小文字・全角半角）も拾う置換パターンを作る。
+
+    辞書に "AcmeCorp" と書いても、本文の "ACMECORP" や全角の "ＡｃｍｅＣｏｒｐ" は
+    単純置換では素通りしていた。英数字だけを対象にし、それ以外の文字は完全一致のまま。
+    辞書側が全角で書かれていても同じに扱うため、先に NFKC で正規化する。
+    """
+    parts: list[str] = []
+    for ch in unicodedata.normalize("NFKC", src):
+        if ch.isascii() and ch.isalnum():
+            variants = {ch, ch.lower(), ch.upper()}
+            variants |= {chr(ord(v) + 0xFEE0) for v in list(variants)}  # 全角英数
+            parts.append("[" + "".join(sorted(re.escape(v) for v in variants)) + "]")
+        else:
+            parts.append(re.escape(ch))
+    return re.compile("".join(parts))
+
+
 def _apply_replacements(text: str, mapping: dict[str, str]) -> tuple[str, int]:
-    """単純文字列置換。長い鍵から適用して部分一致の取りこぼしを防ぐ。"""
+    """固有名の置換。長い鍵から適用して部分一致の取りこぼしを防ぐ。"""
     count = 0
     for src in sorted(mapping.keys(), key=len, reverse=True):
+        if not src:
+            continue
         dst = mapping[src]
-        if src and src in text:
-            count += text.count(src)
-            text = text.replace(src, dst)
+        text, n = _variant_pattern(src).subn(lambda _m, d=dst: d, text)
+        count += n
     return text, count
 
 
