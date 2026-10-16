@@ -8,7 +8,7 @@
 #   name=識別用ラベル / pattern=検出正規表現 / replacement=置換後のダミー文字列
 mask_regex:
   - name: api_key_assignment
-    pattern: '(?i)(api[_-]?key|secret|password|passwd|access[_-]?token|token)\s*[:=]\s*["'']?[A-Za-z0-9_\-\.]{8,}["'']?'
+    pattern: '(?i)(api[_-]?key|secret|password|passwd|access[_-]?token|token)\s*[:=]\s*["'']?[A-Za-z0-9_\-\./+=]{8,}["'']?'
     replacement: '\1=***REDACTED***'
   - name: aws_access_key_id
     pattern: 'AKIA[0-9A-Z]{16}'
@@ -20,8 +20,32 @@ mask_regex:
     pattern: '(?i)(postgres|postgresql|mysql|mongodb(\+srv)?|redis|amqp)://[^\s"''`]+'
     replacement: '\1://***REDACTED***'
   - name: bearer_token
-    pattern: '(?i)bearer\s+[A-Za-z0-9_\-\.=]{16,}'
+    pattern: '(?i)bearer\s+[A-Za-z0-9_\-\.=/+]{16,}'
     replacement: 'Bearer ***REDACTED***'
+  - name: aws_secret_access_key
+    pattern: '(?i)(aws_secret_access_key|aws_secret_key)\s*[:=]\s*["'']?[A-Za-z0-9/+=]{40}["'']?'
+    replacement: '\1=***REDACTED***'
+  - name: llm_api_key
+    pattern: '\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}'
+    replacement: 'sk-***REDACTED***'
+  - name: github_token
+    pattern: '\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})'
+    replacement: 'gh_***REDACTED***'
+  - name: slack_token
+    pattern: '\bxox[abposr]-[A-Za-z0-9\-]{10,}'
+    replacement: 'xox-***REDACTED***'
+  - name: google_api_key
+    pattern: '\bAIza[0-9A-Za-z_\-]{35}'
+    replacement: 'AIza***REDACTED***'
+  - name: stripe_live_key
+    pattern: '\b[rs]k_live_[0-9A-Za-z]{16,}'
+    replacement: 'sk_live_***REDACTED***'
+  - name: jwt
+    pattern: '\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}'
+    replacement: '***REDACTED_JWT***'
+  - name: phone_number_jp
+    pattern: '(?<![\d\-])(?:\+81[\- ]?|0)\d{1,4}-\d{1,4}-\d{3,4}(?![\d\-])'
+    replacement: '0**-****-****'
   - name: email_address
     pattern: '[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'
     replacement: '***@example.com'
@@ -34,10 +58,24 @@ mask_regex:
 #   （mask_regex で消しきれなかった生シークレットの取りこぼしを止める最終防波堤）
 verify_deny:
   - name: leftover_secret_keyword
-    pattern: '(?i)\b(api[_-]?key|secret|passwd|password|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*["'']?[A-Za-z0-9_\-\.]{8,}'
+    pattern: '(?i)\b(api[_-]?key|secret|passwd|password|access[_-]?token|client[_-]?secret)\b\s*[:=]\s*["'']?[A-Za-z0-9_\-\./+=]{8,}'
   - name: leftover_aws_key
     pattern: 'AKIA[0-9A-Z]{16}'
   - name: leftover_private_key
     pattern: '-----BEGIN [A-Z ]*PRIVATE KEY-----'
   - name: leftover_db_uri
     pattern: '(?i)(postgres|postgresql|mysql|mongodb(\+srv)?)://[^\s"''`]*:[^\s"''`]*@'
+  - name: leftover_aws_secret_access_key
+    pattern: '(?i)(aws_secret_access_key|aws_secret_key)\s*[:=]\s*["'']?[A-Za-z0-9/+=]{40}["'']?'
+  - name: leftover_llm_api_key
+    pattern: '\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}'
+  - name: leftover_github_token
+    pattern: '\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})'
+  - name: leftover_slack_token
+    pattern: '\bxox[abposr]-[A-Za-z0-9\-]{10,}'
+  - name: leftover_google_api_key
+    pattern: '\bAIza[0-9A-Za-z_\-]{35}'
+  - name: leftover_stripe_live_key
+    pattern: '\b[rs]k_live_[0-9A-Za-z]{16,}'
+  - name: leftover_jwt
+    pattern: '\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}'
