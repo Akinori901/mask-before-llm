@@ -35,6 +35,19 @@ COMMON_FILE = REDACTION_DIR / "_common.yaml"
 # テキストを LLM へ渡してよい decision
 PUBLISHABLE_DECISIONS = {"anonymize", "as_is"}
 
+# 案件キーとして受け付ける形。"_" で始まるキーは _common / _template などの
+# 予約ファイルを指してしまうので受け付けない（_common.yaml は必ず存在するため、
+# project_key="_common" で「案件辞書あり」と誤判定されて strict を素通りしていた）。
+# "/" や ".." も通さない（REDACTION_DIR の外の YAML を読ませない）。
+_PROJECT_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+
+
+def _check_project_key(project_key: str) -> None:
+    if not isinstance(project_key, str) or not _PROJECT_KEY.fullmatch(project_key):
+        raise MaskingError(
+            f"案件キーが不正: {project_key!r}（英小文字・数字で始まり、英小文字・数字・_・- のみ）"
+        )
+
 
 class MaskingError(Exception):
     """マスキング後も秘匿値が残った/利用不可の案件だった等、LLM に渡してはいけない状態。"""
@@ -102,7 +115,8 @@ def load_project_dict(project_key: str | None) -> dict[str, Any]:
         "verify_deny": list(common.get("verify_deny", [])),
         "decision": None,
     }
-    if project_key:
+    if project_key is not None:
+        _check_project_key(project_key)
         proj = _load_yaml(REDACTION_DIR / f"{project_key}.yaml")
         merged["replace"].update(proj.get("replace", {}) or {})
         merged["replace_paths"].update(proj.get("replace_paths", {}) or {})
@@ -120,7 +134,7 @@ def mask_text(
     """raw を匿名化して (masked_text, report) を返す。
 
     strict_project=True のとき:
-      - 案件辞書が見つからない、または decision が利用不可(metadata_only/pending)なら MaskingError。
+      - 案件辞書が見つからない、decision が無い、または利用不可(metadata_only/pending)なら MaskingError。
         「辞書が無いから素通し」を防ぐ安全側の既定。公開情報だけで書く記事は project_key=None で呼ぶ。
     検証ゲートに残存があれば常に MaskingError。
     """
@@ -135,6 +149,9 @@ def mask_text(
                 raise MaskingError(msg)
             report.notes.append("WARNING: " + msg)
         decision = cfg.get("decision")
+        # decision の書き忘れは「許可」ではなく「未判断」。strict では止める。
+        if decision is None and strict_project:
+            raise MaskingError(f"案件辞書に decision がありません（未判断として中止）: {project_key}")
         if decision is not None and decision not in PUBLISHABLE_DECISIONS:
             raise MaskingError(
                 f"decision={decision} は利用不可（anonymize/as_is のみ許可）: {project_key}"
