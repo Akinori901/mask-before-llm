@@ -8,6 +8,7 @@
 
 処理順:
   1. 案件別辞書 (redaction/<key>.yaml) の replace / replace_paths で固有名を汎用名へ
+     （英数字の大文字小文字・全角半角の表記ゆれも拾う）
   2. 共通 (_common.yaml) + 案件別の mask_regex で秘匿値をダミー化
   3. 検証ゲート (verify_deny): 消しきれない秘匿値が残っていたら MaskingError を送出
      → 呼び出し側は処理を中断し、絶対に LLM へ渡さない
@@ -19,7 +20,9 @@
 """
 from __future__ import annotations
 
+import os
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,11 +32,28 @@ try:
 except ImportError as e:  # pragma: no cover
     raise SystemExit("PyYAML が必要です: pip install pyyaml") from e
 
-REDACTION_DIR = Path(__file__).parent / "redaction"
-COMMON_FILE = REDACTION_DIR / "_common.yaml"
+_PACKAGE_RULES = Path(__file__).parent / "redaction"
+# 案件辞書の置き場所。pip でインストールした場合はパッケージの中に置けないので、
+# MASK_BEFORE_LLM_REDACTION_DIR で指定する（未指定ならパッケージ内の redaction/）。
+REDACTION_DIR = Path(os.environ.get("MASK_BEFORE_LLM_REDACTION_DIR") or _PACKAGE_RULES)
+# 共通ルールは常にパッケージ同梱のものを使う（案件辞書の置き場所とは独立）。
+COMMON_FILE = _PACKAGE_RULES / "_common.yaml"
 
 # テキストを LLM へ渡してよい decision
 PUBLISHABLE_DECISIONS = {"anonymize", "as_is"}
+
+# 案件キーとして受け付ける形。"_" で始まるキーは _common / _template などの
+# 予約ファイルを指してしまうので受け付けない（_common.yaml は必ず存在するため、
+# project_key="_common" で「案件辞書あり」と誤判定されて strict を素通りしていた）。
+# "/" や ".." も通さない（REDACTION_DIR の外の YAML を読ませない）。
+_PROJECT_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+
+
+def _check_project_key(project_key: str) -> None:
+    if not isinstance(project_key, str) or not _PROJECT_KEY.fullmatch(project_key):
+        raise MaskingError(
+            f"案件キーが不正: {project_key!r}（英小文字・数字で始まり、英小文字・数字・_・- のみ）"
+        )
 
 
 class MaskingError(Exception):
@@ -57,14 +77,33 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+def _variant_pattern(src: str) -> re.Pattern[str]:
+    """表記ゆれ（英数字の大文字小文字・全角半角）も拾う置換パターンを作る。
+
+    辞書に "AcmeCorp" と書いても、本文の "ACMECORP" や全角の "ＡｃｍｅＣｏｒｐ" は
+    単純置換では素通りしていた。英数字だけを対象にし、それ以外の文字は完全一致のまま。
+    辞書側が全角で書かれていても同じに扱うため、先に NFKC で正規化する。
+    """
+    parts: list[str] = []
+    for ch in unicodedata.normalize("NFKC", src):
+        if ch.isascii() and ch.isalnum():
+            variants = {ch, ch.lower(), ch.upper()}
+            variants |= {chr(ord(v) + 0xFEE0) for v in list(variants)}  # 全角英数
+            parts.append("[" + "".join(sorted(re.escape(v) for v in variants)) + "]")
+        else:
+            parts.append(re.escape(ch))
+    return re.compile("".join(parts))
+
+
 def _apply_replacements(text: str, mapping: dict[str, str]) -> tuple[str, int]:
-    """単純文字列置換。長い鍵から適用して部分一致の取りこぼしを防ぐ。"""
+    """固有名の置換。長い鍵から適用して部分一致の取りこぼしを防ぐ。"""
     count = 0
     for src in sorted(mapping.keys(), key=len, reverse=True):
+        if not src:
+            continue
         dst = mapping[src]
-        if src and src in text:
-            count += text.count(src)
-            text = text.replace(src, dst)
+        text, n = _variant_pattern(src).subn(lambda _m, d=dst: d, text)
+        count += n
     return text, count
 
 
@@ -102,7 +141,8 @@ def load_project_dict(project_key: str | None) -> dict[str, Any]:
         "verify_deny": list(common.get("verify_deny", [])),
         "decision": None,
     }
-    if project_key:
+    if project_key is not None:
+        _check_project_key(project_key)
         proj = _load_yaml(REDACTION_DIR / f"{project_key}.yaml")
         merged["replace"].update(proj.get("replace", {}) or {})
         merged["replace_paths"].update(proj.get("replace_paths", {}) or {})
@@ -120,7 +160,7 @@ def mask_text(
     """raw を匿名化して (masked_text, report) を返す。
 
     strict_project=True のとき:
-      - 案件辞書が見つからない、または decision が利用不可(metadata_only/pending)なら MaskingError。
+      - 案件辞書が見つからない、decision が無い、または利用不可(metadata_only/pending)なら MaskingError。
         「辞書が無いから素通し」を防ぐ安全側の既定。公開情報だけで書く記事は project_key=None で呼ぶ。
     検証ゲートに残存があれば常に MaskingError。
     """
@@ -135,6 +175,9 @@ def mask_text(
                 raise MaskingError(msg)
             report.notes.append("WARNING: " + msg)
         decision = cfg.get("decision")
+        # decision の書き忘れは「許可」ではなく「未判断」。strict では止める。
+        if decision is None and strict_project:
+            raise MaskingError(f"案件辞書に decision がありません（未判断として中止）: {project_key}")
         if decision is not None and decision not in PUBLISHABLE_DECISIONS:
             raise MaskingError(
                 f"decision={decision} は利用不可（anonymize/as_is のみ許可）: {project_key}"

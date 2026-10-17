@@ -1,0 +1,40 @@
+[project]
+name = "mask-before-llm"
+version = "0.2.0"
+description = "Mask client-confidential text locally before it reaches an LLM — and stop if anything is left."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Akinori901" }]
+keywords = ["llm", "redaction", "anonymization", "nda", "masking", "claude"]
+dependencies = ["pyyaml>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.9,<1.0"]
+
+[project.scripts]
+mask-before-llm-unknown-terms = "mask_before_llm.unknown_terms:main"
+
+[project.urls]
+Homepage = "https://github.com/Akinori901/mask-before-llm"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mask_before_llm"]
+# 案件辞書（取引先名の対応表）を絶対に配布物へ入れない。
+# 同梱してよいのは共通ルールと雛形だけ。.gitignore と二重に守る。
+exclude = ["src/mask_before_llm/redaction/[!_]*.yaml"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["src/mask_before_llm/redaction/[!_]*.yaml", "input/", "output/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"

@@ -11,7 +11,7 @@ AI は一切呼ばない。ルールベースの `re` と PyYAML だけで動く
 from mask_before_llm.masking import mask_text, MaskingError
 
 try:
-    masked = mask_text(raw_text, project_key="acme")
+    masked, report = mask_text(raw_text, project_key="acme")   # 戻り値は (本文, 監査レポート)
 except MaskingError as e:
     # 匿名化しきれなかった。LLM には渡さない
     raise
@@ -27,6 +27,7 @@ send_to_llm(masked)   # 渡すのはこの戻り値だけ
 このツールは3段構えで、最後が**検証ゲート**になっている。
 
 1. **置換** — 案件別辞書の `replace` / `replace_paths` で固有名を汎用名へ
+   （英数字の大文字小文字・全角半角の表記ゆれも拾う。`AcmeCorp` で `ＡＣＭＥＣＯＲＰ` も消える）
 2. **マスク** — 共通ルール + 案件別の `mask_regex` で秘匿値をダミー化
 3. **検証ゲート** — それでも秘匿値が残っていたら `MaskingError` を投げる
 
@@ -41,11 +42,16 @@ mask_text(raw, project_key="unknown-project")   # → MaskingError
 ```
 
 「辞書を用意していない案件が、何も置換されずに素通りする」のが一番怖い事故なので、
-そこを構造的に塞いでいる。`decision` が `metadata_only` / `pending` の案件も同様に止まる。
+そこを構造的に塞いでいる。次の場合も同様に止まる。
+
+- `decision` が `metadata_only` / `pending`、または**書かれていない**（未判断は許可ではない）
+- 案件キーが `_common` / `_template` のような予約名、`../` を含むなどの不正な形
 
 ## 案件辞書
 
 `redaction/<案件key>.yaml` に置く。雛形は [`_template.yaml`](src/mask_before_llm/redaction/_template.yaml)。
+pip でインストールした場合は、環境変数 `MASK_BEFORE_LLM_REDACTION_DIR` で置き場所を指定する
+（案件キーは英小文字・数字で始まり、英小文字・数字・`_`・`-` だけ）。
 
 ```yaml
 key: acme
@@ -63,9 +69,11 @@ mask_regex: []             # 案件固有の秘匿パターン（共通ルール
 
 **この辞書ファイル自体が、隠すべき生の値の一覧になる。** コミットしてはいけない。
 同梱の [`.gitignore`](.gitignore) は `redaction/*.yaml` を除外し、雛形と共通ルールだけを追跡する設定になっている。
+パッケージをビルドしても、案件辞書は wheel / sdist に入らない（`pyproject.toml` で除外し、CI で確認している）。
 
-共通の秘匿パターン（API キー、AWS アクセスキー、秘密鍵ブロック、DB 接続 URI、
-Bearer トークン、メールアドレス、IPv4）は [`_common.yaml`](src/mask_before_llm/redaction/_common.yaml) にあり、
+共通の秘匿パターン（API キーの代入、AWS のアクセスキーとシークレット、秘密鍵ブロック、
+DB 接続 URI、Bearer トークン、Anthropic / OpenAI / GitHub / Slack / Google / Stripe の
+トークン、JWT、メールアドレス、電話番号、IPv4）は [`_common.yaml`](src/mask_before_llm/redaction/_common.yaml) にあり、
 案件辞書の有無に関わらず常に適用される。
 
 ## 辞書の書き漏れを見つける
@@ -76,7 +84,10 @@ Bearer トークン、メールアドレス、IPv4）は [`_common.yaml`](src/ma
 **自動では置換しない。**
 
 ```
-python -m mask_before_llm.unknown_terms --project acme --text-file notes.md
+mask-before-llm-unknown-terms --project acme --text-file notes.md
+
+# コミットログを調べる（- で標準入力）
+git log --since=7.days --format=%s | mask-before-llm-unknown-terms --project acme --text-file -
 ```
 
 置換しないのは、誤検知のコストが非対称だからである。
@@ -95,15 +106,18 @@ python -m mask_before_llm.unknown_terms --project acme --text-file notes.md
 依存は PyYAML のみ。
 
 ```
-pip install pyyaml
+pip install git+https://github.com/Akinori901/mask-before-llm
 ```
 
-テストは pytest でも、pytest 無しの簡易ランナーでも走る。
+開発時:
 
 ```
-python tests/test_masking.py
-python tests/test_unknown_terms.py
+pip install -e ".[dev]"
+pytest
 ```
+
+`tests/test_masking.py` と `tests/test_unknown_terms.py` は pytest 無しの簡易ランナーでも走る
+（`python tests/test_masking.py`）。
 
 ## ライセンス
 

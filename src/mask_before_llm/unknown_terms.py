@@ -12,7 +12,7 @@
 
 使い方:
   python -m mask_before_llm.unknown_terms --project acme --text-file notes.md
-  python -m mask_before_llm.unknown_terms --project acme --weekly   # 直近のコミットログを対象
+  git log --since=7.days --format=%s | python -m mask_before_llm.unknown_terms --project acme --text-file -
 """
 from __future__ import annotations
 
@@ -161,43 +161,10 @@ def report(text: str, project_key: str | None) -> tuple[str, bool]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="辞書に無い固有名詞の候補を検知（置換はしない）")
     ap.add_argument("--project", help="案件キー（番人辞書の既知語を候補から除くために使う）")
-    ap.add_argument("--text-file", help="対象テキストファイル")
-    ap.add_argument("--weekly", action="store_true", help="今週のコミットログを対象にする")
-    ap.add_argument("--days", type=int, default=7, help="--weekly の対象日数（既定7）")
+    ap.add_argument("--text-file", required=True, help="対象テキストファイル（- で標準入力）")
     args = ap.parse_args(argv)
 
-    if args.weekly:
-        from .config import Config
-        from . import weekly_harvest as wh
-
-        cfg = Config.load()
-        projects = wh.fetch_active_projects(cfg)
-        # --project は収穫の「前」に絞る。harvest は案件ごとに git log を回すので、
-        # 後で捨てると1案件見たいだけで全稼働案件を走査することになる。
-        if args.project:
-            if args.project not in projects:
-                ap.error(f"稼働中の案件に見つからない: {args.project}")
-            projects = {args.project: projects[args.project]}
-        data = wh.harvest(projects, args.days)
-        rc = 0
-        for key, c in data["companies"].items():
-            msgs: list[str] = []
-            for log in (c.get("commits") or {}).values():
-                msgs.extend(log)
-            if not msgs:
-                continue
-            text = "\n".join(msgs)
-            body, leaked = report(text, key)
-            print(f"=== {key} （コミット件名 {len(msgs)} 件）===")
-            print(body)
-            print()
-            if leaked:
-                rc = 1
-        return rc
-
-    if not args.text_file:
-        ap.error("--text-file か --weekly のどちらかが必要")
-    text = Path(args.text_file).read_text(encoding="utf-8")
+    text = sys.stdin.read() if args.text_file == "-" else Path(args.text_file).read_text(encoding="utf-8")
     body, leaked = report(text, args.project)
     print(body)
     return 1 if leaked else 0

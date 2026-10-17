@@ -9,23 +9,58 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# CI は読むだけ。トークンに書き込み権限を持たせない。
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # action はコミット SHA で固定する（タグは付け替えられるため）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.12"
-      - run: pip install pyyaml pytest
-      - run: pytest tests/ -v
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest -v
+
+  # 配布物に案件辞書が入らないこと。pyproject の除外設定が壊れたら落ちる。
+  package-excludes-client-dicts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: ダミーの案件辞書を置いてビルドする
+        run: |
+          set -euo pipefail
+          printf 'decision: anonymize\nreplace:\n  "DummyClient": "x"\n' \
+            > src/mask_before_llm/redaction/dummy-client.yaml
+          pip install build
+          python -m build --outdir dist
+      - name: 同梱されているのが共通ルールと雛形だけであること
+        run: |
+          set -euo pipefail
+          FOUND=$( (unzip -Z1 dist/*.whl; tar tzf dist/*.tar.gz) | grep -E 'redaction/[^/]+\.yaml$' \
+            | grep -vE 'redaction/_(common|template)\.yaml$' || true)
+          if [ -n "$FOUND" ]; then
+            echo "案件辞書が配布物に入っています:"; echo "$FOUND"; exit 1
+          fi
+          echo "OK"
 
   # 案件辞書や取引先名がリポジトリへ入り込んでいないことを機械的に確認する。
   # このツール自体が fail-closed を謳っているので、リポジトリ側も同じ思想で守る。
   no-client-data:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: 案件辞書が追跡されていないこと
         run: |
           set -euo pipefail
